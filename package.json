@@ -1,0 +1,31 @@
+{
+  "name": "mcp-grafana",
+  "version": "0.1.0",
+  "description": "MCP server for Grafana integration",
+  "main": "dist/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "watch": "tsc --watch"
+  },
+  "keywords": [
+    "mcp",
+    "grafana",
+    "monitoring"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.5.0",
+    "axios": "^1.10.0",
+    "dotenv": "^17.2.0"
+  },
+  "devDependencies": {
+    "@types/dotenv": "^6.1.1",
+    "@types/node": "^20.19.6",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}
