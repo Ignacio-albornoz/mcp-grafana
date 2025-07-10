@@ -1,31 +1,50 @@
 {
-  "name": "mcp-grafana",
-  "version": "0.1.0",
-  "description": "MCP server for Grafana integration",
-  "main": "dist/index.js",
-  "type": "commonjs",
+  "name": "grafana-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP Server for Grafana integration - fetch data from modules, graphs, and snapshots",
+  "type": "module",
+  "bin": {
+    "grafana-mcp-server": "./build/index.js"
+  },
+  "files": [
+    "build"
+  ],
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "tsx src/index.ts",
-    "watch": "tsc --watch"
+    "build": "tsc && chmod +x build/index.js",
+    "dev": "tsc --watch",
+    "start": "node build/index.js",
+    "clean": "rm -rf build",
+    "rebuild": "npm run clean && npm run build",
+    "prepare": "npm run build",
+    "inspector": "npx @modelcontextprotocol/inspector build/index.js",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix"
   },
   "keywords": [
     "mcp",
     "grafana",
-    "monitoring"
+    "monitoring",
+    "observability"
   ],
-  "author": "",
+  "author": "Your Name",
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^0.5.0",
-    "axios": "^1.10.0",
-    "dotenv": "^17.2.0"
+    "@modelcontextprotocol/sdk": "^1.15.1",
+    "axios": "^1.6.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.0",
+    "zod": "^3.22.0"
   },
   "devDependencies": {
-    "@types/dotenv": "^6.1.1",
-    "@types/node": "^20.19.6",
-    "tsx": "^4.20.3",
-    "typescript": "^5.8.3"
+    "@types/cors": "^2.8.0",
+    "@types/express": "^4.17.0",
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
