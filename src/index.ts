@@ -3,297 +3,288 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import { GrafanaClient } from './grafana-client.js';
+import express from 'express';
+import axios from 'axios';
+import { z } from 'zod';
 
-// Configuración del servidor MCP
-const server = new Server(
-  {
-    name: 'mcp-grafana',
-    version: '0.1.0',
-  },
-  {
-    capabilities: {
-      tools: {},
-    },
+// Environment configuration
+const GRAFANA_URL = process.env.GRAFANA_URL || 'http://localhost:3000';
+const GRAFANA_API_KEY = process.env.GRAFANA_API_KEY || '';
+const HTTP_PORT = parseInt(process.env.HTTP_PORT || '3001');
+
+// Validation schemas
+const QueryPrometheusArgsSchema = z.object({
+  query: z.string().describe('PromQL query to execute'),
+  start: z.string().optional().describe('Start time for range query (ISO format)'),
+  end: z.string().optional().describe('End time for range query (ISO format)'),
+  step: z.string().optional().describe('Step for range query (e.g., "1m", "5m")'),
+  time: z.string().optional().describe('Timestamp for instant query (ISO format)'),
+});
+
+type QueryPrometheusArgs = z.infer<typeof QueryPrometheusArgsSchema>;
+
+// Grafana API client
+class GrafanaClient {
+  private apiKey: string;
+  private baseUrl: string;
+
+  constructor(baseUrl: string, apiKey: string) {
+    this.baseUrl = baseUrl.replace(/\/$/, '');
+    this.apiKey = apiKey;
   }
-);
 
-// Cliente de Grafana
-let grafanaClient: GrafanaClient;
+  async queryPrometheus(args: QueryPrometheusArgs) {
+    try {
+      // Determine if this is a range query or instant query
+      const isRangeQuery = args.start && args.end && args.step;
+      
+      const endpoint = isRangeQuery 
+        ? '/api/datasources/proxy/1/api/v1/query_range'
+        : '/api/datasources/proxy/1/api/v1/query';
 
-// Definir herramientas disponibles
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: [
-      {
-        name: 'get_dashboards',
-        description: 'Obtener lista de dashboards de Grafana',
-        inputSchema: {
-          type: 'object',
-          properties: {},
+      const params: any = {
+        query: args.query,
+      };
+
+      if (isRangeQuery) {
+        params.start = new Date(args.start!).getTime() / 1000;
+        params.end = new Date(args.end!).getTime() / 1000;
+        params.step = args.step;
+      } else if (args.time) {
+        params.time = new Date(args.time).getTime() / 1000;
+      }
+
+      const response = await axios.get(`${this.baseUrl}${endpoint}`, {
+        params,
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Accept': 'application/json',
         },
+      });
+
+      return {
+        status: 'success',
+        data: response.data,
+      };
+    } catch (error: any) {
+      return {
+        status: 'error',
+        error: error.response?.data || error.message,
+      };
+    }
+  }
+}
+
+// MCP Server implementation
+class GrafanaPrometheusServer {
+  private server: Server;
+  private grafanaClient: GrafanaClient;
+
+  constructor() {
+    this.server = new Server(
+      {
+        name: 'grafana-prometheus-mcp',
+        version: '1.0.0',
       },
       {
-        name: 'get_dashboard_details',
-        description: 'Obtener detalles de un dashboard específico',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            dashboardUid: {
-              type: 'string',
-              description: 'UID del dashboard',
+        capabilities: {
+          tools: {},
+        },
+      }
+    );
+
+    this.grafanaClient = new GrafanaClient(GRAFANA_URL, GRAFANA_API_KEY);
+    this.setupHandlers();
+  }
+
+  private setupHandlers() {
+    // Handle tool listing
+    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+      const tools: Tool[] = [
+        {
+          name: 'query_prometheus',
+          description: 'Query Prometheus metrics through Grafana API',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string',
+                description: 'PromQL query to execute',
+              },
+              start: {
+                type: 'string',
+                description: 'Start time for range query (ISO format)',
+              },
+              end: {
+                type: 'string',
+                description: 'End time for range query (ISO format)',
+              },
+              step: {
+                type: 'string',
+                description: 'Step for range query (e.g., "1m", "5m")',
+              },
+              time: {
+                type: 'string',
+                description: 'Timestamp for instant query (ISO format)',
+              },
             },
+            required: ['query'],
           },
-          required: ['dashboardUid'],
         },
-      },
-      {
-        name: 'get_panel_data',
-        description: 'Obtener datos de un panel específico',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            dashboardUid: {
-              type: 'string',
-              description: 'UID del dashboard',
-            },
-            panelId: {
-              type: 'number',
-              description: 'ID del panel',
-            },
-            from: {
-              type: 'string',
-              description: 'Tiempo inicial (ej: now-1h)',
-              default: 'now-1h',
-            },
-            to: {
-              type: 'string',
-              description: 'Tiempo final (ej: now)',
-              default: 'now',
-            },
-          },
-          required: ['dashboardUid', 'panelId'],
-        },
-      },
-      {
-        name: 'get_datasources',
-        description: 'Obtener lista de datasources configurados',
-        inputSchema: {
-          type: 'object',
-          properties: {},
-        },
-      },
-      {
-        name: 'query_prometheus',
-        description: 'Ejecutar query directa a Prometheus',
-        inputSchema: {
-          type: 'object',
-          properties: {
+      ];
+
+      return { tools };
+    });
+
+    // Handle tool execution
+    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+      if (request.params.name === 'query_prometheus') {
+        try {
+          const args = QueryPrometheusArgsSchema.parse(request.params.arguments);
+          const result = await this.grafanaClient.queryPrometheus(args);
+          
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        } catch (error: any) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Error: ${error.message}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+
+      throw new Error(`Unknown tool: ${request.params.name}`);
+    });
+  }
+
+  async run() {
+    const transport = new StdioServerTransport();
+    await this.server.connect(transport);
+    console.error('Grafana Prometheus MCP Server running on stdio');
+  }
+}
+
+// HTTP API for n8n integration
+function setupHttpApi(grafanaClient: GrafanaClient) {
+  const app = express();
+  app.use(express.json());
+
+  // Health check endpoint
+  app.get('/health', (req, res) => {
+    res.json({ status: 'ok', service: 'grafana-prometheus-mcp' });
+  });
+
+  // Query Prometheus endpoint
+  app.post('/api/query_prometheus', async (req, res) => {
+    try {
+      const args = QueryPrometheusArgsSchema.parse(req.body);
+      const result = await grafanaClient.queryPrometheus(args);
+      res.json(result);
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({
+          status: 'error',
+          error: 'Invalid request parameters',
+          details: error.errors,
+        });
+      } else {
+        res.status(500).json({
+          status: 'error',
+          error: error.message,
+        });
+      }
+    }
+  });
+
+  // List available tools (for n8n discovery)
+  app.get('/api/tools', (req, res) => {
+    res.json({
+      tools: [
+        {
+          name: 'query_prometheus',
+          description: 'Query Prometheus metrics through Grafana API',
+          parameters: {
             query: {
               type: 'string',
-              description: 'Query PromQL',
-            },
-            time: {
-              type: 'string',
-              description: 'Timestamp para query instantánea (opcional)',
+              required: true,
+              description: 'PromQL query to execute',
             },
             start: {
               type: 'string',
-              description: 'Tiempo inicial para query de rango',
+              required: false,
+              description: 'Start time for range query (ISO format)',
             },
             end: {
               type: 'string',
-              description: 'Tiempo final para query de rango',
+              required: false,
+              description: 'End time for range query (ISO format)',
             },
             step: {
               type: 'string',
-              description: 'Step para query de rango',
+              required: false,
+              description: 'Step for range query (e.g., "1m", "5m")',
             },
-          },
-          required: ['query'],
-        },
-      },
-      {
-        name: 'create_snapshot',
-        description: 'Crear snapshot de un dashboard',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            dashboardUid: {
+            time: {
               type: 'string',
-              description: 'UID del dashboard',
-            },
-            expires: {
-              type: 'number',
-              description: 'Segundos hasta que expire (0 = nunca)',
-              default: 3600,
+              required: false,
+              description: 'Timestamp for instant query (ISO format)',
             },
           },
-          required: ['dashboardUid'],
-        },
-      },
-    ],
-  };
-});
-
-// Manejar llamadas a herramientas
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-  
-  // Type guard para args
-  if (!args || typeof args !== 'object') {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: 'Error: Argumentos inválidos',
         },
       ],
-    };
-  }
+    });
+  });
 
-  try {
-    switch (name) {
-      case 'get_dashboards':
-        const dashboards = await grafanaClient.getDashboards();
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(dashboards, null, 2),
-            },
-          ],
-        };
-
-      case 'get_dashboard_details':
-        const dashboard = await grafanaClient.getDashboardDetails(
-          args.dashboardUid as string
-        );
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(dashboard, null, 2),
-            },
-          ],
-        };
-
-      case 'get_panel_data':
-        const panelData = await grafanaClient.getPanelData(
-          args.dashboardUid as string,
-          args.panelId as number,
-          (args.from as string) || 'now-1h',
-          (args.to as string) || 'now'
-        );
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(panelData, null, 2),
-            },
-          ],
-        };
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(panelData, null, 2),
-            },
-          ],
-        };
-
-      case 'get_datasources':
-        const datasources = await grafanaClient.getDatasources();
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(datasources, null, 2),
-            },
-          ],
-        };
-
-      case 'query_prometheus':
-        const queryResult = await grafanaClient.queryPrometheus(
-          args.query as string,
-          args.time as string | undefined,
-          args.start as string | undefined,
-          args.end as string | undefined,
-          args.step as string | undefined
-        );
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(queryResult, null, 2),
-            },
-          ],
-        };
-
-      case 'create_snapshot':
-        const snapshot = await grafanaClient.createSnapshot(
-          args.dashboardUid as string,
-          (args.expires as number) || 3600
-        );
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(snapshot, null, 2),
-            },
-          ],
-        };
-
-      default:
-        throw new Error(`Herramienta desconocida: ${name}`);
-    }
-  } catch (error) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        },
-      ],
-    };
-  }
-});
-
-// Inicializar servidor
-async function main() {
-  // Obtener configuración de variables de entorno
-  const grafanaUrl = process.env.GRAFANA_URL;
-  const grafanaApiKey = process.env.GRAFANA_API_KEY;
-
-  if (!grafanaUrl || !grafanaApiKey) {
-    console.error('Error: GRAFANA_URL y GRAFANA_API_KEY deben estar configuradas en .env');
-    process.exit(1);
-  }
-
-  // Inicializar cliente de Grafana
-  grafanaClient = new GrafanaClient(grafanaUrl, grafanaApiKey);
-
-  // Verificar conexión
-  console.error('Verificando conexión con Grafana...');
-  try {
-    await grafanaClient.testConnection();
-    console.error('✓ Conexión exitosa con Grafana');
-  } catch (error) {
-    console.error('✗ Error conectando con Grafana:', error);
-    process.exit(1);
-  }
-
-  // Crear transporte stdio
-  const transport = new StdioServerTransport();
-  
-  // Conectar servidor con transporte
-  await server.connect(transport);
-  
-  console.error('✓ Servidor MCP Grafana iniciado');
+  app.listen(HTTP_PORT, () => {
+    console.error(`HTTP API running on port ${HTTP_PORT}`);
+  });
 }
 
+// Main entry point
+async function main() {
+  const mode = process.env.MODE || 'mcp';
+  const grafanaClient = new GrafanaClient(GRAFANA_URL, GRAFANA_API_KEY);
+
+  if (mode === 'http') {
+    // Run only HTTP API for n8n
+    setupHttpApi(grafanaClient);
+  } else if (mode === 'both') {
+    // Run both MCP and HTTP API
+    setupHttpApi(grafanaClient);
+    const server = new GrafanaPrometheusServer();
+    await server.run();
+  } else {
+    // Run only MCP server (default)
+    const server = new GrafanaPrometheusServer();
+    await server.run();
+  }
+}
+
+// Error handling
+process.on('SIGINT', () => {
+  console.error('Shutting down...');
+  process.exit(0);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
+});
+
 main().catch((error) => {
-  console.error('Error fatal:', error);
+  console.error('Fatal error:', error);
   process.exit(1);
 });

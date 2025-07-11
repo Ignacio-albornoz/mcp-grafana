@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  grafana-prometheus-mcp:
+    build: .
+    ports:
+      - "${HTTP_PORT:-3001}:3001"
+    environment:
+      - GRAFANA_URL=${GRAFANA_URL}
+      - GRAFANA_API_KEY=${GRAFANA_API_KEY}
+      - HTTP_PORT=${HTTP_PORT:-3001}
+      - MODE=${MODE:-both}
+    restart: unless-stopped
+    networks:
+      - mcp-network
+
+networks:
+  mcp-network:
+    driver: bridge

@@ -1,31 +1,37 @@
 {
-  "name": "mcp-grafana",
-  "version": "0.1.0",
-  "description": "MCP server for Grafana integration",
+  "name": "grafana-prometheus-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for querying Prometheus through Grafana API",
+  "type": "module",
   "main": "dist/index.js",
-  "type": "commonjs",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsx src/index.ts",
-    "watch": "tsc --watch"
+    "start:http": "MODE=http node dist/index.js",
+    "start:both": "MODE=both node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "dev:http": "MODE=http tsx watch src/index.ts",
+    "dev:both": "MODE=both tsx watch src/index.ts"
   },
   "keywords": [
     "mcp",
     "grafana",
-    "monitoring"
+    "prometheus",
+    "metrics",
+    "n8n"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.5.0",
-    "axios": "^1.10.0",
-    "dotenv": "^17.2.0"
+    "axios": "^1.6.0",
+    "express": "^4.18.2",
+    "zod": "^3.22.0"
   },
   "devDependencies": {
-    "@types/dotenv": "^6.1.1",
-    "@types/node": "^20.19.6",
-    "tsx": "^4.20.3",
-    "typescript": "^5.8.3"
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
   }
 }
